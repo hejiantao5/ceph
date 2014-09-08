@@ -104,13 +104,23 @@ struct libradosstriper::RadosStriperImpl {
     RadosReadCompletionData(MultiAioCompletionImpl *multiAioCompl,
 			    uint64_t expectedBytes,
 			    bufferlist *bl) :
-      m_multiAioCompl(multiAioCompl), m_expectedBytes(expectedBytes), m_bl(bl) {};
+      m_multiAioCompl(multiAioCompl), m_expectedBytes(expectedBytes), m_bl(bl), m_refCnt() {};
+    // reference counting
+    void get() {
+      m_refCnt.inc();
+    }
+    void put() {
+      if (m_refCnt.dec() == 0)
+	delete this;
+    }
     /// the multi asynch io completion object to be used
     MultiAioCompletionImpl *m_multiAioCompl;
     /// the expected number of bytes
     uint64_t m_expectedBytes;
     /// the bufferlist object where data have been written
     bufferlist *m_bl;
+    /// reference counting
+    atomic_t m_refCnt;
   };
 
   /**
