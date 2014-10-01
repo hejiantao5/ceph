@@ -153,6 +153,7 @@ class MDS : public Dispatcher, public md_config_obs_t {
   Beacon  beacon;
   void set_want_state(MDSMap::DaemonState newstate);
  public:
+
   utime_t get_laggy_until() {return beacon.get_laggy_until();}
 
   AuthAuthorizeHandlerRegistry *authorize_handler_cluster_registry;
