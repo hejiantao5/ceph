@@ -163,6 +163,8 @@ void usage(ostream& out)
 "   -N namespace\n"
 "   --namespace=namespace\n"
 "        specify the namespace to use for the object\n"
+"   --ignore-full\n"
+"        force transactions even if OSD map has FULL flag set\n"
 "\n"
 "BENCH OPTIONS:\n"
 "   -t N\n"
@@ -2648,6 +2650,8 @@ int main(int argc, const char **argv)
       opts["lock-type"] = val;
     } else if (ceph_argparse_witharg(args, i, &val, "-N", "--namespace", (char*)NULL)) {
       opts["namespace"] = val;
+    } else if (ceph_argparse_flag(args, i, "--ignore-full", (char*)NULL)) {
+      opts["ignore-full"] = "true";
     } else {
       if (val[0] == '-')
         usage_exit();
