@@ -7328,7 +7328,8 @@ void OSD::handle_pg_notify(OpRequestRef op)
       PG::CephPeeringEvtRef(
 	new PG::CephPeeringEvt(
 	  it->first.epoch_sent, it->first.query_epoch,
-	  PG::MNotifyRec(pg_shard_t(from, it->first.from), it->first)))
+	  PG::MNotifyRec(pg_shard_t(from, it->first.from), it->first,
+          op->get_req()->get_connection()->get_features())))
       );
   }
 }
@@ -7850,6 +7851,7 @@ void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
 #endif
     
     PG::RecoveryCtx rctx = create_context();
+    rctx.handle = &handle;
 
     int started;
     bool more = pg->start_recovery_ops(max, &rctx, handle, &started);
@@ -8427,6 +8429,7 @@ void OSD::process_peering_events(
   epoch_t same_interval_since = 0;
   OSDMapRef curmap = service.get_osdmap();
   PG::RecoveryCtx rctx = create_context();
+  rctx.handle = &handle;
   for (list<PG*>::const_iterator i = pgs.begin();
        i != pgs.end();
        ++i) {
@@ -8456,6 +8459,7 @@ void OSD::process_peering_events(
     if (compat_must_dispatch_immediately(pg)) {
       dispatch_context(rctx, pg, curmap, &handle);
       rctx = create_context();
+      rctx.handle = &handle;
     } else {
       dispatch_context_transaction(rctx, pg, &handle);
     }
@@ -8545,7 +8549,12 @@ void OSD::set_disk_tp_priority()
 	   << dendl;
   int cls =
     ceph_ioprio_string_to_class(cct->_conf->osd_disk_thread_ioprio_class);
-  disk_tp.set_ioprio(cls, cct->_conf->osd_disk_thread_ioprio_priority);
+  if (cls < 0)
+    derr << __func__ << cpp_strerror(cls) << ": "
+	 << "osd_disk_thread_ioprio_class is " << cct->_conf->osd_disk_thread_ioprio_class
+	 << " but only the following values are allowed: idle, be or rt" << dendl;
+  else
+    disk_tp.set_ioprio(cls, cct->_conf->osd_disk_thread_ioprio_priority);
 }
 
 // --------------------------------

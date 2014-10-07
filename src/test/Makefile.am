@@ -372,6 +372,9 @@ unittest_pglog_SOURCES = test/osd/TestPGLog.cc
 unittest_pglog_CXXFLAGS = $(UNITTEST_CXXFLAGS)
 unittest_pglog_LDADD = $(LIBOSD) $(UNITTEST_LDADD) $(CEPH_GLOBAL)
 check_PROGRAMS += unittest_pglog
+if LINUX
+unittest_pglog_LDADD += -ldl
+endif # LINUX
 
 unittest_ecbackend_SOURCES = test/osd/TestECBackend.cc
 unittest_ecbackend_CXXFLAGS = $(UNITTEST_CXXFLAGS)
@@ -388,9 +391,10 @@ unittest_lru_CXXFLAGS = $(UNITTEST_CXXFLAGS)
 unittest_lru_LDADD = $(UNITTEST_LDADD) $(CEPH_GLOBAL)
 check_PROGRAMS += unittest_lru
 
-if LINUX
-unittest_pglog_LDADD += -ldl
-endif # LINUX
+unittest_io_priority_SOURCES = test/common/test_io_priority.cc
+unittest_io_priority_CXXFLAGS = $(UNITTEST_CXXFLAGS)
+unittest_io_priority_LDADD = $(UNITTEST_LDADD) $(CEPH_GLOBAL)
+check_PROGRAMS += unittest_io_priority
 
 unittest_gather_SOURCES = test/gather.cc
 unittest_gather_LDADD = $(UNITTEST_LDADD) $(CEPH_GLOBAL)
@@ -727,6 +731,11 @@ endif # WITH_RADOSGW
 ceph_test_mon_workloadgen_SOURCES = test/mon/test_mon_workloadgen.cc
 ceph_test_mon_workloadgen_LDADD = $(LIBOS) $(LIBOSDC) $(CEPH_GLOBAL)
 bin_DEBUGPROGRAMS += ceph_test_mon_workloadgen
+
+ceph_test_mon_msg_SOURCES = test/mon/test-mon-msg.cc
+ceph_test_mon_msg_LDADD = $(LIBOS) $(LIBOSDC) $(CEPH_GLOBAL) $(UNITTEST_LDADD)
+ceph_test_mon_msg_CXXFLAGS = $(UNITTEST_CXXFLAGS)
+bin_DEBUGPROGRAMS += ceph_test_mon_msg
 
 ceph_test_rados_api_cmd_SOURCES = test/librados/cmd.cc
 ceph_test_rados_api_cmd_LDADD = $(LIBRADOS) $(UNITTEST_LDADD) $(RADOS_TEST_LDADD)

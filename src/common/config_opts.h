@@ -218,7 +218,6 @@ OPTION(mon_osd_min_down_reports, OPT_INT, 3)     // number of times a down OSD m
 OPTION(mon_osd_force_trim_to, OPT_INT, 0)   // force mon to trim maps to this point, regardless of min_last_epoch_clean (dangerous, use with care)
 OPTION(mon_mds_force_trim_to, OPT_INT, 0)   // force mon to trim mdsmaps to this point (dangerous, use with care)
 
-OPTION(mon_advanced_debug_mode, OPT_BOOL, false) // true for developper oriented testing
 // dump transactions
 OPTION(mon_debug_dump_transactions, OPT_BOOL, false)
 OPTION(mon_debug_dump_location, OPT_STR, "/var/log/ceph/$cluster-$name.tdump")
@@ -911,7 +910,7 @@ OPTION(rgw_bucket_quota_cache_size, OPT_INT, 10000) // number of entries in buck
 
 OPTION(rgw_expose_bucket, OPT_BOOL, false) // Return the bucket name in the 'Bucket' response header
 
-OPTION(rgw_frontends, OPT_STR, "") // alternative front ends
+OPTION(rgw_frontends, OPT_STR, "fastcgi, civetweb port=7480") // rgw front ends
 
 OPTION(rgw_user_quota_bucket_sync_interval, OPT_INT, 180) // time period for accumulating modified buckets before syncing stats
 OPTION(rgw_user_quota_sync_interval, OPT_INT, 3600 * 24) // time period for accumulating modified buckets before syncing entire user stats

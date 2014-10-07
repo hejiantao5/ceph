@@ -557,6 +557,7 @@ public:
 
 private:
   void _reset();   ///< called from bootstrap, start_, or join_election
+  void wait_for_paxos_write();
 public:
   void bootstrap();
   void join_election();
@@ -647,7 +648,6 @@ public:
                         const MonCommand *this_cmd);
   void get_mon_status(Formatter *f, ostream& ss);
   void _quorum_status(Formatter *f, ostream& ss);
-  bool _osdmonitor_prepare_command(cmdmap_t& cmdmap, ostream& ss);
   bool _add_bootstrap_peer_hint(string cmd, cmdmap_t& cmdmap, ostream& ss);
   void handle_command(class MMonCommand *m);
   void handle_route(MRoute *m);

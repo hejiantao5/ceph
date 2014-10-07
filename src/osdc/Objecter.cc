@@ -267,7 +267,9 @@ void Objecter::init()
 	       << cpp_strerror(ret) << dendl;
   }
 
+  timer_lock.Lock();
   timer.init();
+  timer_lock.Unlock();
 
   initialized.set(1);
 }
@@ -369,8 +371,9 @@ void Objecter::shutdown()
   }
 
   if (tick_event) {
-    timer.cancel_event(tick_event);
-    tick_event = NULL;
+    Mutex::Locker l(timer_lock);
+    if (timer.cancel_event(tick_event))
+      tick_event = NULL;
   }
 
   if (m_request_state_hook) {
@@ -386,7 +389,10 @@ void Objecter::shutdown()
     logger = NULL;
   }
 
-  timer.shutdown();
+  {
+    Mutex::Locker l(timer_lock);
+    timer.shutdown();
+  }
 
 }
 
@@ -1522,6 +1528,7 @@ void Objecter::_linger_ops_resend(map<uint64_t, LingerOp *>& lresend)
 
 void Objecter::schedule_tick()
 {
+  Mutex::Locker l(timer_lock);
   assert(tick_event == NULL);
   tick_event = new C_Tick(this);
   timer.add_event_after(cct->_conf->objecter_tick_interval, tick_event);
@@ -1529,19 +1536,18 @@ void Objecter::schedule_tick()
 
 void Objecter::tick()
 {
-  if (!initialized.read()) {
-    schedule_tick();
-    return;
-  }
-
-  assert(rwlock.is_locked());
+  RWLock::RLocker rl(rwlock);
 
   ldout(cct, 10) << "tick" << dendl;
-  assert(initialized.read());
 
   // we are only called by C_Tick
   assert(tick_event);
   tick_event = NULL;
+
+  if (!initialized.read()) {
+    // we raced with shutdown
+    return;
+  }
 
   set<OSDSession*> toping;
 
@@ -1659,24 +1665,23 @@ void Objecter::resend_mon_ops()
 
 class C_CancelOp : public Context
 {
-  Objecter::Op *op;
+  ceph_tid_t tid;
   Objecter *objecter;
 public:
-  C_CancelOp(Objecter::Op *op, Objecter *objecter) : op(op),
-						     objecter(objecter) {}
+  C_CancelOp(ceph_tid_t t, Objecter *objecter) : tid(t), objecter(objecter) {}
   void finish(int r) {
-    objecter->op_cancel(op->session, op->tid, -ETIMEDOUT);
+    objecter->op_cancel(tid, -ETIMEDOUT);
   }
 };
 
-ceph_tid_t Objecter::op_submit(Op *op)
+ceph_tid_t Objecter::op_submit(Op *op, int *ctx_budget)
 {
   RWLock::RLocker rl(rwlock);
   RWLock::Context lc(rwlock, RWLock::Context::TakenForRead);
-  return _op_submit_with_budget(op, lc);
+  return _op_submit_with_budget(op, lc, ctx_budget);
 }
 
-ceph_tid_t Objecter::_op_submit_with_budget(Op *op, RWLock::Context& lc)
+ceph_tid_t Objecter::_op_submit_with_budget(Op *op, RWLock::Context& lc, int *ctx_budget)
 {
   assert(initialized.read());
 
@@ -1684,16 +1689,26 @@ ceph_tid_t Objecter::_op_submit_with_budget(Op *op, RWLock::Context& lc)
   assert(op->ops.size() == op->out_rval.size());
   assert(op->ops.size() == op->out_handler.size());
 
+  // throttle.  before we look at any state, because
+  // take_op_budget() may drop our lock while it blocks.
+  if (!op->ctx_budgeted || (ctx_budget && (*ctx_budget == -1))) {
+    int op_budget = _take_op_budget(op);
+    // take and pass out the budget for the first OP
+    // in the context session
+    if (ctx_budget && (*ctx_budget == -1)) {
+      *ctx_budget = op_budget;
+    }
+  }
+
+  ceph_tid_t tid = _op_submit(op, lc);
+
   if (osd_timeout > 0) {
-    op->ontimeout = new C_CancelOp(op, this);
+    Mutex::Locker l(timer_lock);
+    op->ontimeout = new C_CancelOp(tid, this);
     timer.add_event_after(osd_timeout, op->ontimeout);
   }
 
-  // throttle.  before we look at any state, because
-  // take_op_budget() may drop our lock while it blocks.
-  _take_op_budget(op);
-
-  return _op_submit(op, lc);
+  return tid;
 }
 
 ceph_tid_t Objecter::_op_submit(Op *op, RWLock::Context& lc)
@@ -2287,10 +2302,11 @@ void Objecter::_finish_op(Op *op)
 
   assert(op->session->lock.is_wlocked());
 
-  if (op->budgeted)
+  if (!op->ctx_budgeted && op->budgeted)
     put_op_budget(op);
 
   if (op->ontimeout) {
+    Mutex::Locker l(timer_lock);
     timer.cancel_event(op->ontimeout);
   }
 
@@ -2692,6 +2708,10 @@ void Objecter::list_objects(ListContext *list_context, Context *onfinish)
     }
   }
   if (list_context->at_end_of_pool) {
+    // release the listing context's budget once all
+    // OPs (in the session) are finished
+    put_list_context_budget(list_context);
+
     onfinish->complete(0);
     return;
   }
@@ -2723,7 +2743,7 @@ void Objecter::list_objects(ListContext *list_context, Context *onfinish)
   object_locator_t oloc(list_context->pool_id, list_context->nspace);
 
   pg_read(list_context->current_pg, oloc, op,
-	  &list_context->bl, 0, onack, &onack->epoch);
+	  &list_context->bl, 0, onack, &onack->epoch, &list_context->ctx_budget);
 }
 
 void Objecter::_list_reply(ListContext *list_context, int r,
@@ -2769,6 +2789,9 @@ void Objecter::_list_reply(ListContext *list_context, int r,
   }
   if (!list_context->list.empty()) {
     ldout(cct, 20) << " returning results so far" << dendl;
+    // release the listing context's budget once all
+    // OPs (in the session) are finished
+    put_list_context_budget(list_context);
     final_finish->complete(0);
     return;
   }
@@ -2777,6 +2800,13 @@ void Objecter::_list_reply(ListContext *list_context, int r,
   list_objects(list_context, final_finish);
 }
 
+void Objecter::put_list_context_budget(ListContext *list_context) {
+    if (list_context->ctx_budget >= 0) {
+      ldout(cct, 10) << " release listing context's budget " << list_context->ctx_budget << dendl;
+      put_op_budget_bytes(list_context->ctx_budget);
+      list_context->ctx_budget = -1;
+    }
+  }
 
 
 //snapshots
@@ -2991,6 +3021,7 @@ void Objecter::pool_op_submit(PoolOp *op)
 {
   assert(rwlock.is_locked());
   if (mon_timeout > 0) {
+    Mutex::Locker l(timer_lock);
     op->ontimeout = new C_CancelPoolOp(op->tid, this);
     timer.add_event_after(mon_timeout, op->ontimeout);
   }
@@ -3094,6 +3125,7 @@ void Objecter::_finish_pool_op(PoolOp *op)
   logger->set(l_osdc_poolop_active, pool_ops.size());
 
   if (op->ontimeout) {
+    Mutex::Locker l(timer_lock);
     timer.cancel_event(op->ontimeout);
   }
 
@@ -3127,6 +3159,7 @@ void Objecter::get_pool_stats(list<string>& pools, map<string,pool_stat_t> *resu
   op->onfinish = onfinish;
   op->ontimeout = NULL;
   if (mon_timeout > 0) {
+    Mutex::Locker l(timer_lock);
     op->ontimeout = new C_CancelPoolStatOp(op->tid, this);
     timer.add_event_after(mon_timeout, op->ontimeout);
   }
@@ -3202,6 +3235,7 @@ void Objecter::_finish_pool_stat_op(PoolStatOp *op)
   logger->set(l_osdc_poolstat_active, poolstat_ops.size());
 
   if (op->ontimeout) {
+    Mutex::Locker l(timer_lock);
     timer.cancel_event(op->ontimeout);
   }
 
@@ -3231,6 +3265,7 @@ void Objecter::get_fs_stats(ceph_statfs& result, Context *onfinish)
   op->onfinish = onfinish;
   op->ontimeout = NULL;
   if (mon_timeout > 0) {
+    Mutex::Locker l(timer_lock);
     op->ontimeout = new C_CancelStatfsOp(op->tid, this);
     timer.add_event_after(mon_timeout, op->ontimeout);
   }
@@ -3305,6 +3340,7 @@ void Objecter::_finish_statfs_op(StatfsOp *op)
   logger->set(l_osdc_statfs_active, statfs_ops.size());
 
   if (op->ontimeout) {
+    Mutex::Locker l(timer_lock);
     timer.cancel_event(op->ontimeout);
   }
 
@@ -3744,6 +3780,7 @@ int Objecter::submit_command(CommandOp *c, ceph_tid_t *ptid)
   (void)_calc_command_target(c);
   _assign_command_session(c);
   if (osd_timeout > 0) {
+    Mutex::Locker l(timer_lock);
     c->ontimeout = new C_CancelCommandOp(c->session, tid, this);
     timer.add_event_after(osd_timeout, c->ontimeout);
   }
@@ -3878,6 +3915,7 @@ void Objecter::_finish_command(CommandOp *c, int r, string rs)
     c->onfinish->complete(r);
 
   if (c->ontimeout) {
+    Mutex::Locker l(timer_lock);
     timer.cancel_event(c->ontimeout);
   }
 
