@@ -47,6 +47,7 @@ using namespace std;
 #include "messages/MClientCapRelease.h"
 #include "messages/MClientLease.h"
 #include "messages/MClientSnap.h"
+#include "messages/MOSDMap.h"
 
 #include "messages/MGenericMessage.h"
 
@@ -1964,6 +1965,36 @@ void Client::handle_client_reply(MClientReply *reply)
 }
 
 
+void Client::handle_osd_map(MOSDMap *m)
+{
+  const OSDMap *osdmap = objecter->get_osdmap_read();
+  ldout(cct, 1) << __func__ << ": epoch " << osdmap->get_epoch() << dendl;
+  const bool full = osdmap->test_flag(CEPH_OSDMAP_FULL);
+  objecter->put_osdmap_read();
+
+  if (full) {
+    ldout(cct, 1) << __func__ << ": FULL: cancelling outstanding operations" << dendl;
+    // Cancel all outstanding ops with -ENOSPC: it is necessary to do this rather than blocking,
+    // because otherwise when we fill up we potentially lock caps forever on files with
+    // dirty pages, and we need to be able to release those caps to the MDS so that it can
+    // delete files and free up space.
+
+    objecter->op_cancel_all(-ENOSPC);
+
+    // FIXME: we're reaching around ObjectCacher here, because it's simpler to do this
+    // operation globally across all OSD op TIDs than it is to try and traverse
+    // objectcacher extents.  We rely on ObjectCacher to bubble the results up.  Actually
+    // maybe that particular fixme doesn't need fixing?
+
+    // FIXME: we need to barrier either the OSD or the MDS on seeing this OSD epoch, to avoid
+    // any subsequent file probe or delete operations racing with the just-cancelled operation,
+    // since cancellations are client side and the operation can potentially execute.
+  }
+
+  m->put();
+}
+
+
 // ------------------------
 // incoming messages
 
@@ -1986,7 +2017,7 @@ bool Client::ms_dispatch(Message *m)
     break;
 
   case CEPH_MSG_OSD_MAP:
-    m->put();
+    handle_osd_map(static_cast<MOSDMap*>(m));
     break;
 
     // requests
