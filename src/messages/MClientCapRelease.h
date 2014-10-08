@@ -30,7 +30,9 @@ class MClientCapRelease : public Message {
   epoch_t osd_epoch_barrier;
 
   MClientCapRelease() : 
-    Message(CEPH_MSG_CLIENT_CAPRELEASE, HEAD_VERSION, COMPAT_VERSION) {
+    Message(CEPH_MSG_CLIENT_CAPRELEASE, HEAD_VERSION, COMPAT_VERSION),
+    osd_epoch_barrier(0)
+  {
     memset(&head, 0, sizeof(head));
   }
 private:
@@ -54,6 +56,7 @@ public:
     head.num = caps.size();
     ::encode(head, payload);
     ::encode_nohead(caps, payload);
+    ::encode(osd_epoch_barrier, payload);
   }
 };
 
