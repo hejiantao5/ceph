@@ -31,6 +31,7 @@
 #include "events/EOpen.h"
 
 #include "msg/Messenger.h"
+#include "osdc/Objecter.h"
 
 #include "messages/MGenericMessage.h"
 #include "messages/MDiscover.h"
@@ -3123,6 +3124,22 @@ void Locker::handle_client_cap_release(MClientCapRelease *m)
   if (!mds->is_clientreplay() && !mds->is_active() && !mds->is_stopping()) {
     mds->wait_for_replay(new C_MDS_RetryMessage(mds, m));
     return;
+  }
+
+  if (m->osd_epoch_barrier) {
+    MDSInternalContext *retry = new C_MDS_RetryMessage(mds, m);
+    MDSIOContext *w = new C_IO_Wrapper(mds, retry);
+    Context *f = new C_OnFinisher(w, &mds->finisher);
+    bool ready = mds->objecter->wait_for_map(m->osd_epoch_barrier, f);
+    if (!ready) {
+      m->put();
+      return;
+    } else {
+      // We are already ready, won't need these
+      delete f;
+      delete w;
+      delete retry;
+    }
   }
 
   Session *session = static_cast<Session *>(m->get_connection()->get_priv());
