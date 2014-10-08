@@ -115,7 +115,7 @@ libradosstriper::RadosStriperImpl::CompletionData::CompletionData
  const std::string& soid,
  const std::string& lockCookie,
  librados::AioCompletionImpl *userCompletion) :
-  m_striper(striper), m_soid(soid), m_lockCookie(lockCookie), m_ack(0) {
+  m_striper(striper), m_soid(soid), m_lockCookie(lockCookie), m_ack(0), m_refCnt(1) {
   m_striper->get();
   if (userCompletion) m_ack = new librados::IoCtxImpl::C_aio_Ack(userCompletion);
 }
@@ -381,7 +381,7 @@ static void striper_read_aio_req_complete(rados_striper_multi_completion_t c, vo
   libradosstriper::MultiAioCompletionImpl *comp =
     reinterpret_cast<libradosstriper::MultiAioCompletionImpl*>(c);
   cdata->complete(comp->rval);
-  delete cdata;
+  cdata->put();
   comp->ref--;
 }
 
@@ -481,8 +481,9 @@ int libradosstriper::RadosStriperImpl::aio_read(const std::string& soid,
     // read all extends of a given object in one go
     nc->add_request();
     RadosReadCompletionData *data = new RadosReadCompletionData(nc, p->length, oid_bl);
-    data->get(); // to be released by rados_req_read_complete
-    data->get(); // to be released by rados_req_read_safe
+    // we need a second reference as both rados_req_read_safe and rados_req_read_complete
+    // will release one
+    data->get();
     librados::AioCompletion *rados_completion =
       m_radosCluster.aio_create_completion(data, rados_req_read_complete, rados_req_read_safe);
     r = m_ioCtx.aio_read(p->oid.name, rados_completion, oid_bl, p->length, p->offset);
@@ -647,6 +648,7 @@ static void striper_write_req_complete(rados_striper_multi_completion_t c, void 
   libradosstriper::RadosStriperImpl::WriteCompletionData *cdata =
     reinterpret_cast<libradosstriper::RadosStriperImpl::WriteCompletionData*>(arg);
   cdata->m_striper->closeForWrite(cdata->m_soid, cdata->m_lockCookie);
+  cdata->put();
 }
 
 int libradosstriper::RadosStriperImpl::write_in_open_object(const std::string& soid,
@@ -668,8 +670,7 @@ int libradosstriper::RadosStriperImpl::write_in_open_object(const std::string& s
     // return result
     rc = c->get_return_value();
   }
-  delete cdata;
-  c->release();
+  c->put();
   return rc;
 }
 
@@ -681,10 +682,8 @@ static void striper_write_aio_req_complete(rados_striper_multi_completion_t c, v
   libradosstriper::MultiAioCompletionImpl *comp =
     reinterpret_cast<libradosstriper::MultiAioCompletionImpl*>(c);
   cdata->complete(comp->rval);
-  if (0 == comp->pending_safe) {
-    delete cdata;
-    comp->ref--;
-  }
+  cdata->put();
+  comp->ref--;
 }
 
 static void striper_write_aio_req_safe(rados_striper_multi_completion_t c, void *arg)
@@ -694,10 +693,8 @@ static void striper_write_aio_req_safe(rados_striper_multi_completion_t c, void 
   libradosstriper::MultiAioCompletionImpl *comp =
     reinterpret_cast<libradosstriper::MultiAioCompletionImpl*>(c);
   cdata->safe(comp->rval);
-  if (0 == comp->pending_complete) {
-    delete cdata;
-    comp->ref--;
-  }
+  cdata->put();
+  comp->ref--;
 }
 
 int libradosstriper::RadosStriperImpl::aio_write_in_open_object(const std::string& soid,
@@ -710,8 +707,14 @@ int libradosstriper::RadosStriperImpl::aio_write_in_open_object(const std::strin
   // create a completion object
   m_ioCtxImpl->get();
   WriteCompletionData *cdata = new WriteCompletionData(this, soid, lockCookie, c);
+  // we need a second reference as both striper_write_aio_req_complete and
+  // striper_write_aio_req_safe will release one
+  cdata->get();
   c->io = m_ioCtxImpl;
   libradosstriper::MultiAioCompletionImpl *nc = new libradosstriper::MultiAioCompletionImpl;
+  // we need a second reference as both striper_write_aio_req_complete and
+  // striper_write_aio_req_safe will release one
+  nc->get();
   nc->set_complete_callback(cdata, striper_write_aio_req_complete);
   nc->set_safe_callback(cdata, striper_write_aio_req_safe);
   // internal asynchronous API

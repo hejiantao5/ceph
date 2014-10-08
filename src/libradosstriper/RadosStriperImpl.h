@@ -33,14 +33,6 @@ struct libradosstriper::RadosStriperImpl {
    * function in asynchronous operations
    */
   struct CompletionData {
-    /// striper to be used to handle the write completion
-    libradosstriper::RadosStriperImpl *m_striper;
-    /// striped object concerned by the write operation
-    std::string m_soid;
-    /// shared lock to be released at completion
-    std::string m_lockCookie;
-    /// completion handler
-    librados::IoCtxImpl::C_aio_Ack *m_ack;
     /// constructor
     CompletionData(libradosstriper::RadosStriperImpl * striper,
 		   const std::string& soid,
@@ -50,6 +42,24 @@ struct libradosstriper::RadosStriperImpl {
     virtual ~CompletionData();
     /// complete method
     void complete(int r);
+    // reference counting
+    void get() {
+      m_refCnt.inc();
+    }
+    void put() {
+      if (m_refCnt.dec() == 0)
+	delete this;
+    }
+    /// striper to be used to handle the write completion
+    libradosstriper::RadosStriperImpl *m_striper;
+    /// striped object concerned by the write operation
+    std::string m_soid;
+    /// shared lock to be released at completion
+    std::string m_lockCookie;
+    /// completion handler
+    librados::IoCtxImpl::C_aio_Ack *m_ack;
+    /// reference counting
+    atomic_t m_refCnt;
   };
 
   /**
@@ -104,7 +114,7 @@ struct libradosstriper::RadosStriperImpl {
     RadosReadCompletionData(MultiAioCompletionImpl *multiAioCompl,
 			    uint64_t expectedBytes,
 			    bufferlist *bl) :
-      m_multiAioCompl(multiAioCompl), m_expectedBytes(expectedBytes), m_bl(bl), m_refCnt() {};
+      m_multiAioCompl(multiAioCompl), m_expectedBytes(expectedBytes), m_bl(bl), m_refCnt(1) {};
     // reference counting
     void get() {
       m_refCnt.inc();
