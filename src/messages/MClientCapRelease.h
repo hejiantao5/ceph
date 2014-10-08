@@ -19,12 +19,18 @@
 
 
 class MClientCapRelease : public Message {
+  static const int HEAD_VERSION = 2;
+  static const int COMPAT_VERSION = 1;
  public:
   struct ceph_mds_cap_release head;
   vector<ceph_mds_cap_item> caps;
 
+  // The message receiver must wait for this OSD epoch
+  // before actioning this cap release.
+  epoch_t osd_epoch_barrier;
+
   MClientCapRelease() : 
-    Message(CEPH_MSG_CLIENT_CAPRELEASE) {
+    Message(CEPH_MSG_CLIENT_CAPRELEASE, HEAD_VERSION, COMPAT_VERSION) {
     memset(&head, 0, sizeof(head));
   }
 private:
@@ -40,6 +46,9 @@ public:
     bufferlist::iterator p = payload.begin();
     ::decode(head, p);
     ::decode_nohead(head.num, caps, p);
+    if (header.version >= 2) {
+      ::decode(osd_epoch_barrier, p);
+    }
   }
   void encode_payload(uint64_t features) {
     head.num = caps.size();
