@@ -1979,16 +1979,8 @@ void Client::handle_osd_map(MOSDMap *m)
     // dirty pages, and we need to be able to release those caps to the MDS so that it can
     // delete files and free up space.
 
-    objecter->op_cancel_all(-ENOSPC);
-
-    // FIXME: we're reaching around ObjectCacher here, because it's simpler to do this
-    // operation globally across all OSD op TIDs than it is to try and traverse
-    // objectcacher extents.  We rely on ObjectCacher to bubble the results up.  Actually
-    // maybe that particular fixme doesn't need fixing?
-
-    // FIXME: we need to barrier either the OSD or the MDS on seeing this OSD epoch, to avoid
-    // any subsequent file probe or delete operations racing with the just-cancelled operation,
-    // since cancellations are client side and the operation can potentially execute.
+    epoch_t cancelled_epoch = objecter->op_cancel_writes(-ENOSPC);
+    set_cap_epoch_barrier(cancelled_epoch);
   }
 
   m->put();
@@ -9410,5 +9402,18 @@ void Client::clear_filer_flags(int flags)
   Mutex::Locker l(client_lock);
   assert(flags == CEPH_OSD_FLAG_LOCALIZE_READS);
   objecter->clear_global_op_flag(flags);
+}
+
+/**
+ * This is included in cap release messages, to cause
+ * the MDS to wait until this OSD map epoch.  It is necessary
+ * in corner cases where we cancel RADOS ops, so that
+ * nobody else tries to do IO to the same objects in
+ * the same epoch as the cancelled ops.
+ */
+void Client::set_cap_epoch_barrier(epoch_t e)
+{
+  ldout(cct, 5) << __func__ << " epoch = " << e << dendl;
+  cap_epoch_barrier = e;
 }
 
