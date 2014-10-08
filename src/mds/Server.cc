@@ -1302,7 +1302,6 @@ void Server::dispatch_client_request(MDRequestRef& mdr)
         req->get_op() == CEPH_MDS_OP_RENAME ||
         req->get_op() == CEPH_MDS_OP_SYMLINK ||
         req->get_op() == CEPH_MDS_OP_MKSNAP) {
-      full_queue.push_back(mdr);
 
       dout(20) << __func__ << ": full, responding ENOSPC to op " << ceph_mds_op_name(req->get_op()) << dendl;
       reply_request(mdr, -ENOSPC);
