@@ -21,7 +21,7 @@
 
 class MClientCaps : public Message {
 
-  static const int HEAD_VERSION = 4;   // added flock metadata, inline data
+  static const int HEAD_VERSION = 5;   // added flock metadata, inline data
   static const int COMPAT_VERSION = 1;
 
  public:
@@ -32,6 +32,9 @@ class MClientCaps : public Message {
   bufferlist flockbl;
   version_t  inline_version;
   bufferlist inline_data;
+
+  // Receivers may not use their new caps until they have this OSD map
+  epoch_t osd_map_barrier;
 
   int      get_caps() { return head.caps; }
   int      get_wanted() { return head.wanted; }
@@ -85,7 +88,8 @@ class MClientCaps : public Message {
   }
 
   MClientCaps()
-    : Message(CEPH_MSG_CLIENT_CAPS, HEAD_VERSION, COMPAT_VERSION) {
+    : Message(CEPH_MSG_CLIENT_CAPS, HEAD_VERSION, COMPAT_VERSION),
+      osd_map_barrier(0) {
     inline_version = 0;
   }
   MClientCaps(int op,
@@ -97,7 +101,8 @@ class MClientCaps : public Message {
 	      int wanted,
 	      int dirty,
 	      int mseq)
-    : Message(CEPH_MSG_CLIENT_CAPS, HEAD_VERSION, COMPAT_VERSION) {
+    : Message(CEPH_MSG_CLIENT_CAPS, HEAD_VERSION, COMPAT_VERSION),
+      osd_map_barrier(0) {
     memset(&head, 0, sizeof(head));
     head.op = op;
     head.ino = ino;
@@ -114,7 +119,8 @@ class MClientCaps : public Message {
   MClientCaps(int op,
 	      inodeno_t ino, inodeno_t realm,
 	      uint64_t id, int mseq)
-    : Message(CEPH_MSG_CLIENT_CAPS, HEAD_VERSION) {
+    : Message(CEPH_MSG_CLIENT_CAPS, HEAD_VERSION),
+      osd_map_barrier(0){
     memset(&head, 0, sizeof(head));
     head.op = op;
     head.ino = ino;
