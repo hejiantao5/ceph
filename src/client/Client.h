@@ -494,6 +494,7 @@ protected:
   void wait_sync_caps(uint64_t want);
   void queue_cap_snap(Inode *in, snapid_t seq=0);
   void finish_cap_snap(Inode *in, CapSnap *capsnap, int used);
+ protected:
   void _flushed_cap_snap(Inode *in, snapid_t seq);
 
   void _schedule_invalidate_dentry_callback(Dentry *dn, bool del);
@@ -520,6 +521,7 @@ protected:
   bool _flush(Inode *in, Context *c=NULL);
   void _flush_range(Inode *in, int64_t off, uint64_t size);
   void _flushed(Inode *in);
+ public:
   void flush_set_callback(ObjectCacher::ObjectSet *oset);
 
   void close_release(Inode *in);
