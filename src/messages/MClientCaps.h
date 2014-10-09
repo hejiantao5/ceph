@@ -34,7 +34,7 @@ class MClientCaps : public Message {
   bufferlist inline_data;
 
   // Receivers may not use their new caps until they have this OSD map
-  epoch_t osd_map_barrier;
+  epoch_t osd_epoch_barrier;
 
   int      get_caps() { return head.caps; }
   int      get_wanted() { return head.wanted; }
@@ -89,7 +89,7 @@ class MClientCaps : public Message {
 
   MClientCaps()
     : Message(CEPH_MSG_CLIENT_CAPS, HEAD_VERSION, COMPAT_VERSION),
-      osd_map_barrier(0) {
+      osd_epoch_barrier(0) {
     inline_version = 0;
   }
   MClientCaps(int op,
@@ -100,9 +100,10 @@ class MClientCaps : public Message {
 	      int caps,
 	      int wanted,
 	      int dirty,
-	      int mseq)
+	      int mseq,
+              epoch_t oeb)
     : Message(CEPH_MSG_CLIENT_CAPS, HEAD_VERSION, COMPAT_VERSION),
-      osd_map_barrier(0) {
+      osd_epoch_barrier(oeb) {
     memset(&head, 0, sizeof(head));
     head.op = op;
     head.ino = ino;
@@ -118,9 +119,9 @@ class MClientCaps : public Message {
   }
   MClientCaps(int op,
 	      inodeno_t ino, inodeno_t realm,
-	      uint64_t id, int mseq)
+	      uint64_t id, int mseq, epoch_t oeb)
     : Message(CEPH_MSG_CLIENT_CAPS, HEAD_VERSION),
-      osd_map_barrier(0){
+      osd_epoch_barrier(oeb){
     memset(&head, 0, sizeof(head));
     head.op = op;
     head.ino = ino;

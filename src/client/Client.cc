@@ -44,7 +44,6 @@ using namespace std;
 #include "messages/MClientRequestForward.h"
 #include "messages/MClientReply.h"
 #include "messages/MClientCaps.h"
-#include "messages/MClientCapRelease.h"
 #include "messages/MClientLease.h"
 #include "messages/MClientSnap.h"
 #include "messages/MOSDMap.h"
@@ -2584,7 +2583,8 @@ void Client::send_cap(Inode *in, MetaSession *session, Cap *cap,
 				   cap->implemented,
 				   want,
 				   flush,
-				   cap->mseq);
+				   cap->mseq,
+                                   cap_epoch_barrier);
   m->head.issue_seq = cap->issue_seq;
   m->set_tid(flush_tid);
 
@@ -2834,7 +2834,8 @@ void Client::flush_snaps(Inode *in, bool all_again, CapSnap *again)
     in->auth_cap->session->flushing_capsnaps.push_back(&capsnap->flushing_item);
 
     capsnap->flush_tid = ++in->last_flush_tid;
-    MClientCaps *m = new MClientCaps(CEPH_CAP_OP_FLUSHSNAP, in->ino, in->snaprealm->ino, 0, mseq);
+    MClientCaps *m = new MClientCaps(CEPH_CAP_OP_FLUSHSNAP, in->ino, in->snaprealm->ino, 0, mseq,
+        cap_epoch_barrier);
     m->set_client_tid(capsnap->flush_tid);
     m->head.snap_follows = p->first;
 
@@ -3182,14 +3183,12 @@ void Client::remove_cap(Cap *cap, bool queue_release)
   ldout(cct, 10) << "remove_cap mds." << mds << " on " << *in << dendl;
   
   if (queue_release) {
-    if (!session->release)
-      session->release = new MClientCapRelease;
-    ceph_mds_cap_item i;
-    i.ino = in->ino;
-    i.cap_id = cap->cap_id;
-    i.seq = cap->issue_seq;
-    i.migrate_seq = cap->mseq;
-    session->release->caps.push_back(i);
+    session->enqueue_cap_release(
+      in->ino,
+      cap->cap_id,
+      cap->issue_seq,
+      cap->mseq,
+      cap_epoch_barrier);
   }
 
   if (in->auth_cap == cap) {
@@ -3697,6 +3696,16 @@ void Client::handle_caps(MClientCaps *m)
   }
   got_mds_push(session);
 
+  if (m->osd_epoch_barrier) {
+    C_SaferCond cond;
+    if (objecter->wait_for_map(m->osd_epoch_barrier, &cond)) {
+      client_lock.Unlock();
+      ldout(cct, 5) << __func__ << ": waiting for OSD epoch " << m->osd_epoch_barrier << dendl;
+      cond.wait();
+      client_lock.Lock();
+    };
+  }
+
   m->clear_payload();  // for if/when we send back to MDS
 
   Inode *in = 0;
@@ -3706,14 +3715,12 @@ void Client::handle_caps(MClientCaps *m)
   if (!in) {
     if (m->get_op() == CEPH_CAP_OP_IMPORT) {
       ldout(cct, 5) << "handle_caps don't have vino " << vino << " on IMPORT, immediately releasing" << dendl;
-      if (!session->release)
-	session->release = new MClientCapRelease;
-      ceph_mds_cap_item i;
-      i.ino = m->get_ino();
-      i.cap_id = m->get_cap_id();
-      i.seq = m->get_seq();
-      i.migrate_seq = m->get_mseq();
-      session->release->caps.push_back(i);
+      session->enqueue_cap_release(
+        m->get_ino(),
+        m->get_cap_id(),
+        m->get_seq(),
+        m->get_mseq(),
+        cap_epoch_barrier);
     } else {
       ldout(cct, 5) << "handle_caps don't have vino " << vino << ", dropping" << dendl;
     }

@@ -1920,6 +1920,11 @@ bool MDS::handle_core_message(Message *m)
 
     server->handle_osd_map();
 
+    // By default the objecter only requests OSDMap updates on use,
+    // we would like to always receive the latest maps in order to
+    // apply policy based on the FULL flag.
+    objecter->maybe_request_map();
+
     break;
 
   default:

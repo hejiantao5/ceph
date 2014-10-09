@@ -1289,15 +1289,12 @@ void Server::dispatch_client_request(MDRequestRef& mdr)
   assert(mdr->more()->waiting_on_slave.empty());
   
   if (is_full) {
-    dout(20) << __func__ << ": I am full, conditionally dispatching" << dendl;
-    if (req->get_op() == CEPH_MDS_OP_SETATTR ||
-        req->get_op() == CEPH_MDS_OP_SETLAYOUT ||
+    if (req->get_op() == CEPH_MDS_OP_SETLAYOUT ||
         req->get_op() == CEPH_MDS_OP_SETDIRLAYOUT ||
         req->get_op() == CEPH_MDS_OP_SETLAYOUT ||
         req->get_op() == CEPH_MDS_OP_RMXATTR ||
         req->get_op() == CEPH_MDS_OP_SETFILELOCK ||
         req->get_op() == CEPH_MDS_OP_CREATE ||
-        req->get_op() == CEPH_MDS_OP_OPEN ||
         req->get_op() == CEPH_MDS_OP_LINK ||
         req->get_op() == CEPH_MDS_OP_RENAME ||
         req->get_op() == CEPH_MDS_OP_SYMLINK ||

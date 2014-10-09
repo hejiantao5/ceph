@@ -219,6 +219,7 @@ class MDS : public Dispatcher, public md_config_obs_t {
 
  public:
   void set_osd_epoch_barrier(epoch_t e);
+  epoch_t get_osd_epoch_barrier() const {return osd_epoch_barrier;}
 
   void wait_for_active(MDSInternalContextBase *c) { 
     waiting_for_active.push_back(c); 
