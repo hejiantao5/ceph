@@ -215,7 +215,11 @@ class MDS : public Dispatcher, public md_config_obs_t {
 
   ceph_tid_t last_tid;    // for mds-initiated requests (e.g. stray rename)
 
+  epoch_t osd_epoch_barrier;
+
  public:
+  void set_osd_epoch_barrier(epoch_t e);
+
   void wait_for_active(MDSInternalContextBase *c) { 
     waiting_for_active.push_back(c); 
   }

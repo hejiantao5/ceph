@@ -3141,7 +3141,12 @@ void Locker::handle_client_cap_release(MClientCapRelease *m)
       delete f;
       delete w;
       delete retry;
+
+      // So that any time we issue caps on this inode to anyone else they
+      // will have to have this OSD map too.
+      mds->set_osd_epoch_barrier(m->osd_epoch_barrier);
     }
+
   }
 
   Session *session = static_cast<Session *>(m->get_connection()->get_priv());
