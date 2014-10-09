@@ -3202,13 +3202,11 @@ void Server::handle_client_file_setlock(MDRequestRef& mdr)
     } else {
       dout(10) << " unlock attempt on " << set_lock << dendl;
       lock_state->remove_lock(set_lock, activated_locks);
-      cur->take_waiting(CInode::WAIT_FLOCK, waiters);
     }
-    reply_request(mdr, 0);
-    /* For now we're ignoring the activated locks because their responses
-     * will be sent when the lock comes up again in rotation by the MDS.
-     * It's a cheap hack, but it's easy to code. */
+    cur->take_waiting(CInode::WAIT_FLOCK, waiters);
     mds->queue_waiters(waiters);
+
+    reply_request(mdr, 0);
   } else {
     dout(10) << " lock attempt on " << set_lock << dendl;
     if (mdr->more()->flock_was_waiting &&
