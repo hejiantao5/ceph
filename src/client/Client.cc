@@ -1443,43 +1443,71 @@ int Client::make_request(MetaRequest *request,
     request->kick = false;
     while (!request->reply &&         // reply
 	   request->resend_mds < 0 && // forward
-	   !request->kick)
+	   !request->kick &&
+	   !request->aborted)
       caller_cond.Wait(client_lock);
     request->caller_cond = NULL;
 
     // did we get a reply?
     if (request->reply) 
       break;
+    if (request->aborted)
+      break;
   }
 
   // got it!
   MClientReply *reply = request->reply;
-  request->reply = NULL;
-  r = reply->get_result();
+  if (reply) {
+    request->reply = NULL;
+    r = reply->get_result();
 
-  // kick dispatcher (we've got it!)
-  assert(request->dispatch_cond);
-  request->dispatch_cond->Signal();
-  ldout(cct, 20) << "sendrecv kickback on tid " << tid << " " << request->dispatch_cond << dendl;
-  request->dispatch_cond = 0;
-  
-  if (r >= 0 && ptarget)
-    r = verify_reply_trace(r, request, reply, ptarget, pcreated, uid, gid);
+    // kick dispatcher (we've got it!)
+    assert(request->dispatch_cond);
+    request->dispatch_cond->Signal();
+    ldout(cct, 20) << "sendrecv kickback on tid " << tid << " " << request->dispatch_cond << dendl;
+    request->dispatch_cond = 0;
 
-  if (pdirbl)
-    pdirbl->claim(reply->get_extra_bl());
+    if (r >= 0 && ptarget)
+      r = verify_reply_trace(r, request, reply, ptarget, pcreated, uid, gid);
 
-  // -- log times --
-  utime_t lat = ceph_clock_now(cct);
-  lat -= request->sent_stamp;
-  ldout(cct, 20) << "lat " << lat << dendl;
-  logger->tinc(l_c_lat, lat);
-  logger->tinc(l_c_reply, lat);
+    if (pdirbl)
+      pdirbl->claim(reply->get_extra_bl());
 
+    // -- log times --
+    utime_t lat = ceph_clock_now(cct);
+    lat -= request->sent_stamp;
+    ldout(cct, 20) << "lat " << lat << dendl;
+    logger->tinc(l_c_lat, lat);
+    logger->tinc(l_c_reply, lat);
+
+    reply->put();
+  } else {
+    assert(request->aborted);
+    ldout(cct, 10) << "make_request tid " << tid << " was aborted" << dendl;
+    r = -EINTR;
+  }
   put_request(request);
 
-  reply->put();
   return r;
+}
+
+void Client::unregister_request(MetaRequest *request)
+{
+  if (request->got_unsafe)
+    request->unsafe_item.remove_myself();
+  request->item.remove_myself();
+  mds_requests.erase(request->get_tid());
+  put_request(request);
+}
+
+void Client::abort_request(MetaRequest *request)
+{
+  ldout(cct, 10) << "abort_request tid " << request->get_tid() << dendl;
+  assert(!request->got_unsafe);
+  if (request->caller_cond) {
+    request->aborted = true;
+    request->caller_cond->Signal();
+  }
 }
 
 void Client::put_request(MetaRequest *request)
@@ -1846,21 +1874,27 @@ void Client::handle_client_request_forward(MClientRequestForward *fwd)
   MetaRequest *request = mds_requests[tid];
   assert(request);
 
-  // reset retry counter
-  request->retry_attempt = 0;
+  if (!request->aborted) {
+    // reset retry counter
+    request->retry_attempt = 0;
 
-  // request not forwarded, or dest mds has no session.
-  // resend.
-  ldout(cct, 10) << "handle_client_request tid " << tid
-	   << " fwd " << fwd->get_num_fwd() 
-	   << " to mds." << fwd->get_dest_mds() 
-	   << ", resending to " << fwd->get_dest_mds()
-	   << dendl;
-  
-  request->mds = -1;
-  request->num_fwd = fwd->get_num_fwd();
-  request->resend_mds = fwd->get_dest_mds();
-  request->caller_cond->Signal();
+    // request not forwarded, or dest mds has no session.
+    // resend.
+    ldout(cct, 10) << "handle_client_request tid " << tid
+		   << " fwd " << fwd->get_num_fwd()
+		   << " to mds." << fwd->get_dest_mds()
+		   << ", resending to " << fwd->get_dest_mds()
+		   << dendl;
+
+    request->mds = -1;
+    request->num_fwd = fwd->get_num_fwd();
+    request->resend_mds = fwd->get_dest_mds();
+    request->caller_cond->Signal();
+  } else {
+    ldout(cct, 10) << "handle_client_request_forward tid " << tid << " was aborted" << dendl;
+    assert(!request->got_unsafe);
+    unregister_request(request);
+  }
 
   fwd->put();
 }
@@ -1902,7 +1936,7 @@ void Client::handle_client_reply(MClientReply *reply)
     return;
   }
 
-  if (-ESTALE == reply->get_result()) { // see if we can get to proper MDS
+  if (-ESTALE == reply->get_result() && !request->aborted) { // see if we can get to proper MDS
     ldout(cct, 20) << "got ESTALE on tid " << request->tid
 		   << " from mds." << request->mds << dendl;
     request->send_to_auth = true;
@@ -1935,29 +1969,30 @@ void Client::handle_client_reply(MClientReply *reply)
   // Only signal the caller once (on the first reply):
   // Either its an unsafe reply, or its a safe reply and no unsafe reply was sent.
   if (!is_safe || !request->got_unsafe) {
-    Cond cond;
-    request->dispatch_cond = &cond;
+    if (!request->aborted) {
+      Cond cond;
+      request->dispatch_cond = &cond;
 
-    // wake up waiter
-    ldout(cct, 20) << "handle_client_reply signalling caller " << (void*)request->caller_cond << dendl;
-    request->caller_cond->Signal();
+      // wake up waiter
+      ldout(cct, 20) << "handle_client_reply signalling caller " << (void*)request->caller_cond << dendl;
+      request->caller_cond->Signal();
 
-    // wake for kick back
-    while (request->dispatch_cond) {
-      ldout(cct, 20) << "handle_client_reply awaiting kickback on tid " << tid << " " << &cond << dendl;
-      cond.Wait(client_lock);
+      // wake for kick back
+      while (request->dispatch_cond) {
+	ldout(cct, 20) << "handle_client_reply awaiting kickback on tid " << tid << " " << &cond << dendl;
+	cond.Wait(client_lock);
+      }
+    } else {
+      ldout(cct, 20) << "handle_client_reply request tid " << tid << " was aborted" << dendl;
+      request->reply = NULL;
+      reply->put();
     }
   }
 
   if (is_safe) {
     // the filesystem change is committed to disk
     // we're done, clean up
-    if (request->got_unsafe) {
-      request->unsafe_item.remove_myself();
-    }
-    request->item.remove_myself();
-    mds_requests.erase(tid);
-    put_request(request);
+    unregister_request(request);
   }
   if (unmounting)
     mount_cond.Signal();
@@ -2163,10 +2198,14 @@ void Client::kick_requests(MetaSession *session)
 {
   ldout(cct, 10) << "kick_requests for mds." << session->mds_num << dendl;
   for (map<ceph_tid_t, MetaRequest*>::iterator p = mds_requests.begin();
-       p != mds_requests.end();
-       ++p) {
-    if (p->second->mds == session->mds_num) {
-      send_request(p->second, session);
+       p != mds_requests.end();) {
+    MetaRequest *req = p->second;
+    ++p;
+    if (req->mds == session->mds_num) {
+      if (!req->aborted)
+	send_request(req, session);
+      else
+	unregister_request(req); // cleanup aborted request
     }
   }
 }

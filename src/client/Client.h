@@ -268,6 +268,8 @@ public:
 		   //MClientRequest *req, int uid, int gid,
 		   Inode **ptarget = 0, bool *pcreated = 0,
 		   int use_mds=-1, bufferlist *pdirbl=0);
+  void unregister_request(MetaRequest *request);
+  void abort_request(MetaRequest *request);
   void put_request(MetaRequest *request);
 
   int verify_reply_trace(int r, MetaRequest *request, MClientReply *reply,
