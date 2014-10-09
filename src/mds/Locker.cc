@@ -3132,9 +3132,11 @@ void Locker::handle_client_cap_release(MClientCapRelease *m)
     Context *f = new C_OnFinisher(w, &mds->finisher);
     bool ready = mds->objecter->wait_for_map(m->osd_epoch_barrier, f);
     if (!ready) {
+      dout(5) << __func__ << ": waiting for osd epoch " << m->osd_epoch_barrier << dendl;
       m->put();
       return;
     } else {
+      dout(20) << __func__ << ": already have at least osd epoch " << m->osd_epoch_barrier << dendl;
       // We are already ready, won't need these
       delete f;
       delete w;
