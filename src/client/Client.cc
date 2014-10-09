@@ -165,6 +165,7 @@ Client::Client(Messenger *m, MonClient *mc)
     getgroups_cb_handle(NULL),
     async_ino_invalidator(m->cct),
     async_dentry_invalidator(m->cct),
+    interrupt_finisher(m->cct),
     objecter_finisher(m->cct),
     tick_event(NULL),
     monclient(mc), messenger(m), whoami(m->get_myname().num()),
@@ -452,6 +453,12 @@ void Client::shutdown()
     ldout(cct, 10) << "shutdown stopping dentry invalidator finisher" << dendl;
     async_dentry_invalidator.wait_for_empty();
     async_dentry_invalidator.stop();
+  }
+
+  if (switch_interrupt_cb) {
+    ldout(cct, 10) << "shutdown stopping interrupt finisher" << dendl;
+    interrupt_finisher.wait_for_empty();
+    interrupt_finisher.stop();
   }
 
   objectcacher->stop();  // outside of client_lock! this does a join.
@@ -7392,6 +7399,7 @@ void Client::ll_register_switch_interrupt_cb(client_switch_interrupt_callback_t 
   if (cb == NULL)
     return;
   switch_interrupt_cb = cb;
+  interrupt_finisher.start();
 }
 
 void Client::ll_register_getgroups_cb(client_getgroups_callback_t cb, void *handle)
@@ -9446,14 +9454,28 @@ int Client::ll_flock(Fh *fh, int cmd, uint64_t owner, void *fuse_req)
   return _flock(fh, cmd, owner, fuse_req);
 }
 
+class C_Client_RequestInterrupt : public Context  {
+private:
+  Client *client;
+  MetaRequest *req;
+public:
+  C_Client_RequestInterrupt(Client *c, MetaRequest *r) : client(c), req(r) {
+    req->get();
+  }
+  void finish(int r) {
+    Mutex::Locker l(client->client_lock);
+    client->abort_request(req);
+    client->put_request(req);
+  }
+};
+
 void Client::ll_interrupt(void *d)
 {
   MetaRequest *req = static_cast<MetaRequest*>(d);
   ldout(cct, 3) << "ll_interrupt tid " << req->get_tid() << dendl;
   tout(cct) << "ll_interrupt tid " << req->get_tid() << std::endl;
 
-  Locker l(client->client_lock);
-  abort_request(req);
+  interrupt_finisher.queue(new C_Client_RequestInterrupt(this, req));
 }
 
 // =========================================
