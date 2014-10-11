@@ -107,17 +107,6 @@ int ErasureCodeBench::setup(int argc, char** argv) {
   workload = vm["workload"].as<string>();
   erasures = vm["erasures"].as<int>();
 
-  k = atoi(parameters["k"].c_str());
-  m = atoi(parameters["m"].c_str());
-  
-  if (k <= 0) {
-    cout << "parameter k is " << k << ". But k needs to be > 0." << endl;
-    return -EINVAL;
-  } else if ( m < 0 ) {
-    cout << "parameter m is " << m << ". But m needs to be >= 0." << endl;
-    return -EINVAL;
-  } 
-
   return 0;
 }
 
@@ -141,11 +130,13 @@ int ErasureCodeBench::encode()
     cerr << messages.str() << endl;
     return code;
   }
+  int k = atoi(parameters["k"].c_str());
+  int m = atoi(parameters["m"].c_str());
 
   if (erasure_code->get_data_chunk_count() != (unsigned int)k ||
       (erasure_code->get_chunk_count() - erasure_code->get_data_chunk_count()
        != (unsigned int)m)) {
-    cout << "parameter k is " << k << "/m is " << m << ". But data chunk count is "
+    cout << "paramter k is " << k << "/m is " << m << ". But data chunk count is "
       << erasure_code->get_data_chunk_count() <<"/parity chunk count is "
       << erasure_code->get_chunk_count() - erasure_code->get_data_chunk_count() << endl;
     return -EINVAL;
@@ -179,10 +170,13 @@ int ErasureCodeBench::decode()
     cerr << messages.str() << endl;
     return code;
   }
+  int k = atoi(parameters["k"].c_str());
+  int m = atoi(parameters["m"].c_str());
+
   if (erasure_code->get_data_chunk_count() != (unsigned int)k ||
       (erasure_code->get_chunk_count() - erasure_code->get_data_chunk_count()
        != (unsigned int)m)) {
-    cout << "parameter k is " << k << "/m is " << m << ". But data chunk count is "
+    cout << "paramter k is " << k << "/m is " << m << ". But data chunk count is "
       << erasure_code->get_data_chunk_count() <<"/parity chunk count is "
       << erasure_code->get_chunk_count() - erasure_code->get_data_chunk_count() << endl;
     return -EINVAL;
