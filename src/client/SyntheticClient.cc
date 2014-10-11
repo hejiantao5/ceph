@@ -2174,11 +2174,13 @@ int SyntheticClient::read_file(const std::string& fn, int size,
     // verify fingerprint
     int bad = 0;
     uint64_t *p = (uint64_t*)buf;
+    uint64_t readoff;
+    int64_t readclient;
     while ((char*)p + 32 < buf + rdsize) {
-      uint64_t readoff = *p;
+      readoff = *p;
       uint64_t wantoff = (uint64_t)i*(uint64_t)rdsize + (uint64_t)((char*)p - buf);
       p++;
-      int64_t readclient = *p;
+      readclient = *p;
       p++;
       if (readoff != wantoff ||
 	  readclient != client->get_nodeid()) {

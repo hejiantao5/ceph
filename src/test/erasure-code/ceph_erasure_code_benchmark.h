@@ -24,15 +24,10 @@ using namespace std;
 class ErasureCodeBench {
   int in_size;
   int max_iterations;
-  int erasures;
-  int k;
-  int m;
-
   string plugin;
+  int erasures;
   string workload;
-
   map<string,string> parameters;
-
 public:
   int setup(int argc, char** argv);
   int run();
